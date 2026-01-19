@@ -23,18 +23,22 @@ loop_mode = 0
 song_queue = []
 is_paused = False
 
-playlist_data = []  # Lista curenta de melodii afisata in UI
+playlist_data = []
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "music.db")
 
-pygame.mixer.init(frequency=44100)
-MUSIC_END_EVENT = pygame.USEREVENT + 1
-pygame.mixer.music.set_endevent(MUSIC_END_EVENT)
+try:
+    pygame.mixer.init(frequency=44100)
+    MUSIC_END_EVENT = pygame.USEREVENT + 1
+    pygame.mixer.music.set_endevent(MUSIC_END_EVENT)
+except Exception as e:
+    print(f"Eroare initializare audio: {e}")
 
 # --- CONFIGURARE DESIGN ---
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("green")
 
+# --- LISTA DE CULORI (TEME) ---
 THEME_COLORS = {
     "Spotify Green": "#1DB954",
     "Ocean Blue": "#3498db",
@@ -43,14 +47,18 @@ THEME_COLORS = {
     "Hot Pink": "#e91e63",
     "Cyber Yellow": "#f1c40f"
 }
+
+# Culoarea curenta
 COLOR_ACCENT = THEME_COLORS["Spotify Green"]
+
+# Culori fundal (Tuple: Light, Dark)
 COLOR_BG_CARD = ("#ebebeb", "#2b2b2b")
 COLOR_TEXT_LIST = ("black", "white")
-COLOR_BG_LIST = ("#ffffff", "#1e1e1e")
+COLOR_BG_LIST = ("#ffffff", "#2b2b2b")
 
 
 # =========================================================
-#                    CLASA TOOLTIP
+#             CLASA TOOLTIP
 # =========================================================
 class ToolTip:
     def __init__(self, widget, text):
@@ -63,16 +71,29 @@ class ToolTip:
     def show_tip(self, event=None):
         if self.tip_window or not self.text:
             return
-        x, y, _cx, cy = self.widget.bbox("insert")
-        x = x + self.widget.winfo_rootx() + 25
-        y = y + cy + self.widget.winfo_rooty() + 25
-        self.tip_window = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
-        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
-                         background="#ffffe0", relief=tk.SOLID, borderwidth=1,
-                         font=("tahoma", "8", "normal"))
-        label.pack(ipadx=1)
+
+        # 1. Luam coordonatele exacte ale mouse-ului pe ecran
+        x_mouse, y_mouse = self.widget.winfo_pointerxy()
+
+        # Le mutam putin mai jos si la dreapta ca sa nu acopere sageata mouse-ului
+        x = x_mouse + 15
+        y = y_mouse + 10
+
+        self.tip_window = tk.Toplevel(self.widget)
+
+        # 2. Scoatem bara de titlu a ferestrei mici
+        self.tip_window.wm_overrideredirect(True)
+
+        # 3. PROPRIETATEA CRITICA: O fortam sa fie "Topmost" (deasupra tuturor)
+        self.tip_window.wm_attributes("-topmost", True)
+
+        self.tip_window.wm_geometry(f"+{x}+{y}")
+
+        # 4. Setam fundal ALB si text NEGRU explicit
+        label = tk.Label(self.tip_window, text=self.text, justify=tk.LEFT,
+                         background="white", fg="black", relief=tk.SOLID, borderwidth=1,
+                         font=("Arial", "9", "normal"))
+        label.pack(ipadx=4, ipady=2)
 
     def hide_tip(self, event=None):
         if self.tip_window:
@@ -110,60 +131,22 @@ def init_db():
 
     # Tabel Melodii (Master Library)
     c.execute('''CREATE TABLE IF NOT EXISTS melodii
-                 (
-                     id
-                     INTEGER
-                     PRIMARY
-                     KEY
-                     AUTOINCREMENT,
-                     nume
-                     TEXT,
-                     cale
-                     TEXT,
-                     username
-                     TEXT
-                 )''')
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  nume TEXT,cale TEXT,username TEXT)''')
 
     # Tabel Playlists (Nume playlisturi)
     c.execute('''CREATE TABLE IF NOT EXISTS playlists
-                 (
-                     id
-                     INTEGER
-                     PRIMARY
-                     KEY
-                     AUTOINCREMENT,
-                     nume
-                     TEXT,
-                     username
-                     TEXT
-                 )''')
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  nume TEXT, username TEXT)''')
 
     # Tabel Legatura (Ce melodii sunt in ce playlist)
     c.execute('''CREATE TABLE IF NOT EXISTS playlist_songs
-    (
-        playlist_id
-        INTEGER,
-        song_id
-        INTEGER,
-        FOREIGN
-        KEY
-                 (
-        playlist_id
-                 ) REFERENCES playlists
-                 (
-                     id
-                 ),
-        FOREIGN KEY
-                 (
-                     song_id
-                 ) REFERENCES melodii
-                 (
-                     id
-                 ))''')
+                 (playlist_id INTEGER, song_id INTEGER,
+                  FOREIGN KEY(playlist_id) REFERENCES playlists(id),
+                  FOREIGN KEY(song_id) REFERENCES melodii(id))''')
 
     conn.commit()
     conn.close()
-
 
 def autentificare(username, password):
     DB_NAME = "users.db"
@@ -175,7 +158,7 @@ def autentificare(username, password):
         user_record = c.fetchone()
         conn.close()
         return True if user_record else False
-    except sqlite3.Error:
+    except sqlite3.Error as e:
         return False
 
 
@@ -189,6 +172,7 @@ def inregistrare_user(username, password):
         if c.fetchone():
             conn.close()
             return False, "Utilizatorul exista deja!"
+
         c.execute("INSERT INTO users VALUES (?, ?)", (username, password))
         conn.commit()
         conn.close()
@@ -208,23 +192,24 @@ def login(event=None):
         root.deiconify()
         root.title(f"MP3 Player - {current_user}")
 
-        # Initializeaza baza de date muzica
-        init_db()
+        conn = sqlite3.connect(DB_PATH)
+        init_db() # Asigura ca tabelele exista
 
-        # Incarca UI
         reimprospatare_sidebar_playlists()
-        incarcare_melodii()  # Incarca "All Songs" default
+        incarcare_melodii()
     else:
         messagebox.showerror("Eroare", "User sau parola incorecte!")
         password_entry.delete(0, 'end')
 
 
 # =========================================================
-#               LOGICA PLAYLISTS (NOU)
+#               LOGICA PLAYLISTS
 # =========================================================
 
 def creaza_playlist_nou():
     dialog = CTkInputDialog(text="Nume Playlist:", title="Playlist Nou")
+    # Uneori dialogurile CTk apar sub fereastra principala, fortam focus
+    dialog.attributes("-topmost", True)
     nume = dialog.get_input()
     if nume:
         conn = sqlite3.connect(DB_PATH)
@@ -233,7 +218,6 @@ def creaza_playlist_nou():
         conn.commit()
         conn.close()
         reimprospatare_sidebar_playlists()
-
 
 def sterge_playlist_curent():
     if active_playlist_id is None:
@@ -250,15 +234,14 @@ def sterge_playlist_curent():
         c.execute("DELETE FROM playlists WHERE id=?", (active_playlist_id,))
         conn.commit()
         conn.close()
-        schimba_playlist(None)  # Revino la biblioteca
+        schimba_playlist(None) # Revino la biblioteca
         reimprospatare_sidebar_playlists()
-
 
 def adauga_in_playlist_db(playlist_id):
     try:
         # Luam melodia selectata din lista curenta
         index_selectat = lista_melodii.curselection()[0]
-        id_melodie = playlist_data[index_selectat][0]  # ID din baza de date
+        id_melodie = playlist_data[index_selectat][0] # ID din baza de date
 
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -275,7 +258,6 @@ def adauga_in_playlist_db(playlist_id):
     except IndexError:
         pass
 
-
 def schimba_playlist(id_playlist):
     global active_playlist_id
     active_playlist_id = id_playlist
@@ -283,8 +265,8 @@ def schimba_playlist(id_playlist):
 
     # Update UI titlu
     if id_playlist is None:
-        playlist_title_lbl.configure(text="📚 Biblioteca Mea")
-        del_playlist_btn.pack_forget()  # Ascunde buton stergere pt biblioteca
+        playlist_title_lbl.configure(text="Biblioteca Mea")
+        del_playlist_btn.pack_forget() # Ascunde buton stergere pt biblioteca
     else:
         # Cauta nume playlist
         conn = sqlite3.connect(DB_PATH)
@@ -293,9 +275,8 @@ def schimba_playlist(id_playlist):
         res = c.fetchone()
         conn.close()
         if res:
-            playlist_title_lbl.configure(text=f"📂 {res[0]}")
-            del_playlist_btn.pack(side=tk.RIGHT, padx=10)  # Arata buton stergere
-
+            playlist_title_lbl.configure(text=f" {res[0]}")
+            del_playlist_btn.pack(side=tk.RIGHT, padx=10) # Arata buton stergere
 
 def reimprospatare_sidebar_playlists():
     # Sterge butoanele vechi din sidebar (inafara de titlu si buton Create)
@@ -309,14 +290,14 @@ def reimprospatare_sidebar_playlists():
     conn.close()
 
     # Buton pentru "All Songs"
-    btn_all = ctk.CTkButton(scrollable_playlist_frame, text="📚 Toate Melodiile",
+    btn_all = ctk.CTkButton(scrollable_playlist_frame, text="Toate Melodiile",
                             command=lambda: schimba_playlist(None),
                             fg_color="transparent", anchor="w", height=30)
     btn_all.pack(fill="x", pady=2)
 
     # Butoane pentru Playlists Custom
     for pid, pnume in playlists:
-        btn = ctk.CTkButton(scrollable_playlist_frame, text=f"📂 {pnume}",
+        btn = ctk.CTkButton(scrollable_playlist_frame, text=f" {pnume}",
                             command=lambda i=pid: schimba_playlist(i),
                             fg_color="transparent", anchor="w", height=30)
         btn.pack(fill="x", pady=2)
@@ -345,16 +326,15 @@ def get_melodii(filtru_nume=""):
         # --- CAZ 2: PLAYLIST SPECIFIC ---
         # Facem JOIN intre melodii si playlist_songs
         if filtru_nume:
-            query = """SELECT m.id, m.nume, m.cale
-                       FROM melodii m
-                                JOIN playlist_songs ps ON m.id = ps.song_id
-                       WHERE ps.playlist_id = ? \
-                         AND m.nume LIKE ?"""
+            query = """SELECT m.id, m.nume, m.cale 
+                       FROM melodii m 
+                       JOIN playlist_songs ps ON m.id = ps.song_id 
+                       WHERE ps.playlist_id = ? AND m.nume LIKE ?"""
             params = (active_playlist_id, f"%{filtru_nume}%")
         else:
-            query = """SELECT m.id, m.nume, m.cale
-                       FROM melodii m
-                                JOIN playlist_songs ps ON m.id = ps.song_id
+            query = """SELECT m.id, m.nume, m.cale 
+                       FROM melodii m 
+                       JOIN playlist_songs ps ON m.id = ps.song_id 
                        WHERE ps.playlist_id = ?"""
             params = (active_playlist_id,)
 
@@ -446,6 +426,7 @@ def play_melodie(event=None):
 
         status_label.configure(text=f"🎵 Redare: {nume_melodie}")
         pauza_button.configure(text="⏸", fg_color=COLOR_ACCENT)
+        # Butonul play ia culoarea temei
         play_button.configure(fg_color=("gray", "white"), text_color=COLOR_ACCENT)
 
         slider_progres.set(0)
@@ -472,6 +453,7 @@ def stop_melodie(event=None):
 def pauza_melodie():
     global is_paused
     if not playlist_activ: return
+
     if not is_paused:
         pygame.mixer.music.pause()
         is_paused = True
@@ -560,8 +542,7 @@ def melodie_anterioara():
 def adauga_melodie_noua():
     # Adaugam doar in biblioteca principala
     if active_playlist_id is not None:
-        messagebox.showinfo("Info",
-                            "Poti importa melodii noi doar in 'Biblioteca Mea', apoi le poti adauga in playlist-uri.")
+        messagebox.showinfo("Info", "Poti importa melodii noi doar in 'Biblioteca Mea', apoi le poti adauga in playlist-uri.")
         return
 
     cale_fisier = filedialog.askopenfilename(filetypes=[("MP3 Files", "*.mp3")])
@@ -648,14 +629,21 @@ def schimba_tema_fundal():
         lista_melodii.config(bg=COLOR_BG_LIST[1], fg=COLOR_TEXT_LIST[1])
 
 
+# --- SCHIMBARE CULOARE ACCENT ---
 def schimba_culoare_accent(alegere):
     global COLOR_ACCENT
     COLOR_ACCENT = THEME_COLORS[alegere]
+
+    # Actualizam elementele vizuale
     slider_progres.configure(progress_color=COLOR_ACCENT)
     lista_melodii.config(selectbackground=COLOR_ACCENT)
+
+    # Daca play este activ, actualizam culoarea textului
     if playlist_activ:
         play_button.configure(text_color=COLOR_ACCENT)
         pauza_button.configure(fg_color=COLOR_ACCENT)
+
+    # Butoanele toggle
     if shuffle_mode: shuffle_button.configure(fg_color=COLOR_ACCENT)
     if loop_mode == 1: loop_button.configure(fg_color=COLOR_ACCENT)
 
@@ -681,7 +669,7 @@ def incarcare_melodii(event=None):
     else:
         for pid, pnume in toate_playlisturile:
             # Folosim lambda cu parametru default pentru a salva pid-ul
-            meniu_add_playlist.add_command(label=f"📂 {pnume}", command=lambda i=pid: adauga_in_playlist_db(i))
+            meniu_add_playlist.add_command(label=f" {pnume}", command=lambda i=pid: adauga_in_playlist_db(i))
 
     for index, (id_db, nume, cale) in enumerate(playlist_data):
         lista_melodii.insert(END, f"{index + 1}. {nume}")
@@ -694,6 +682,9 @@ def deschide_manager_coada():
     w = ctk.CTkToplevel(root)
     w.title("Manager Coadă")
     w.geometry("400x400")
+    # Facem si fereastra asta sa stea deasupra daca e nevoie
+    w.attributes("-topmost", True)
+
     ctk.CTkLabel(w, text="Melodii ce urmează:", font=("Arial", 16, "bold")).pack(pady=10)
     lst = Listbox(w, width=50, height=15)
     lst.pack(pady=5, padx=10)
@@ -712,7 +703,9 @@ def deschide_manager_coada():
     def sterge():
         try:
             sel = lst.curselection()[0]
-            if song_queue: del song_queue[sel]; refresh()
+            if song_queue:
+                del song_queue[sel]
+                refresh()
         except:
             pass
 
@@ -722,16 +715,13 @@ def deschide_manager_coada():
 
 def adauga_la_coada_selectie():
     try:
-        sel = lista_melodii.curselection()[0];
-        song_queue.append(sel);
-        status_label.configure(
+        sel = lista_melodii.curselection()[0]; song_queue.append(sel); status_label.configure(
             text=f"Adaugat in coada: {playlist_data[sel][1]}")
     except:
         pass
 
 
-def arata_meniu_contextual(event):
-    meniu_contextual.tk_popup(event.x_root, event.y_root)
+def arata_meniu_contextual(event): meniu_contextual.tk_popup(event.x_root, event.y_root)
 
 
 # =========================================================
@@ -740,7 +730,7 @@ def arata_meniu_contextual(event):
 
 root = ctk.CTk()
 root.title("MP3 Player Modern")
-root.geometry("900x650")  # Marim putin fereastra pentru sidebar
+root.geometry("900x650") # Marim putin fereastra pentru sidebar
 
 root.bind('<space>', lambda e: pauza_melodie())
 
@@ -755,7 +745,7 @@ sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=0, pady=0)
 ctk.CTkLabel(sidebar, text="MP3 PLAYER", font=("Arial", 20, "bold")).pack(pady=20)
 ctk.CTkButton(sidebar, text="➕ Playlist Nou", command=creaza_playlist_nou, fg_color="#444").pack(pady=10, padx=10)
 
-ctk.CTkLabel(sidebar, text="PLAYLISTS", font=("Arial", 12), text_color="gray").pack(pady=(20, 5), anchor="w", padx=10)
+ctk.CTkLabel(sidebar, text="PLAYLISTS", font=("Arial", 12), text_color="gray").pack(pady=(20,5), anchor="w", padx=10)
 
 scrollable_playlist_frame = ctk.CTkScrollableFrame(sidebar, fg_color="transparent")
 scrollable_playlist_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -766,8 +756,8 @@ content_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
 # --- HEADER PLAYLIST CURENT ---
 header_frame = ctk.CTkFrame(content_frame, fg_color="transparent", height=40)
-header_frame.pack(fill=tk.X, padx=20, pady=(10, 0))
-playlist_title_lbl = ctk.CTkLabel(header_frame, text="📚 Biblioteca Mea", font=("Arial", 18, "bold"))
+header_frame.pack(fill=tk.X, padx=20, pady=(10,0))
+playlist_title_lbl = ctk.CTkLabel(header_frame, text="Biblioteca Mea", font=("Arial", 18, "bold"))
 playlist_title_lbl.pack(side=tk.LEFT)
 
 del_playlist_btn = ctk.CTkButton(header_frame, text="🗑 Sterge Playlist", command=sterge_playlist_curent,
@@ -780,10 +770,12 @@ search_frame.pack(fill=tk.X, padx=20, pady=(10, 10))
 search_entry = ctk.CTkEntry(search_frame, placeholder_text="🔍 Caută melodie...", height=35)
 search_entry.pack(fill=tk.X)
 search_entry.bind("<KeyRelease>", incarcare_melodii)
+ToolTip(search_entry, "Scrie pentru a filtra melodiile")
 
 # Lista Melodii
 lista_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
 lista_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
+# Setam culorile initiale (Dark Mode)
 lista_melodii = Listbox(lista_frame, bg=COLOR_BG_LIST[1], fg=COLOR_TEXT_LIST[1],
                         selectbackground=COLOR_ACCENT, selectforeground="white",
                         font=("Arial", 12), borderwidth=0, highlightthickness=0)
@@ -793,12 +785,13 @@ scrollbar = ctk.CTkScrollbar(lista_melodii, command=lista_melodii.yview)
 lista_melodii.configure(yscrollcommand=scrollbar.set)
 lista_melodii.bind("<Double-Button-1>", play_melodie)
 lista_melodii.bind("<Button-3>", arata_meniu_contextual)
+ToolTip(lista_melodii, "Dublu-Click pentru redare, Click-Dreapta pentru optiuni")
 
 # --- MENIURI CONTEXTUALE (Click Dreapta) ---
 meniu_contextual = tk.Menu(root, tearoff=0)
 meniu_contextual.add_command(label="▶ Redă", command=play_melodie)
 meniu_contextual.add_separator()
-meniu_contextual.add_command(label="⏱ Adaugă la Coadă", command=adauga_la_coada_selectie)
+meniu_contextual.add_command(label="Adaugă la Coadă", command=adauga_la_coada_selectie)
 
 # Sub-meniu pentru adaugare in playlist
 meniu_add_playlist = tk.Menu(meniu_contextual, tearoff=0)
@@ -807,7 +800,7 @@ meniu_contextual.add_cascade(label="➕ Adaugă în Playlist...", menu=meniu_add
 meniu_contextual.add_separator()
 meniu_contextual.add_command(label="❌ Sterge", command=sterge_melodie)
 
-# 3. PLAYER CONTROLS
+# 3. PLAYER CONTROLS (DESIGN NOU)
 control_frame = ctk.CTkFrame(content_frame, fg_color=COLOR_BG_CARD, corner_radius=20)
 control_frame.pack(pady=20, padx=20, fill=tk.X, side=tk.BOTTOM)
 
@@ -822,6 +815,7 @@ slider_progres.set(0)
 slider_progres.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
 slider_progres.bind("<Button-1>", start_drag)
 slider_progres.bind("<ButtonRelease-1>", stop_drag)
+ToolTip(slider_progres, "Trage pentru a schimba pozitia in melodie")
 
 # B. Main Buttons
 buttons_frame = ctk.CTkFrame(control_frame, fg_color="transparent")
@@ -830,17 +824,24 @@ buttons_frame.pack(pady=5)
 anterior = ctk.CTkButton(buttons_frame, text="⏮", command=melodie_anterioara, width=40, fg_color="transparent",
                          hover_color="#444")
 anterior.grid(row=0, column=0, padx=10)
+ToolTip(anterior, "Melodia Anterioara")
+
 play_button = ctk.CTkButton(buttons_frame, text="▶", command=play_melodie, width=60, height=60,
                             corner_radius=30, fg_color=COLOR_ACCENT, font=("Arial", 24))
 play_button.grid(row=0, column=1, padx=15)
+ToolTip(play_button, "Reda / Reporneste")
+
 pauza_button = ctk.CTkButton(buttons_frame, text="⏸", command=pauza_melodie, width=40, fg_color="transparent",
                              hover_color="#444")
 pauza_button.grid(row=0, column=2, padx=10)
+ToolTip(pauza_button, "Pauza / Continua (Space)")
+
 next_button = ctk.CTkButton(buttons_frame, text="⏭", command=next_melodie, width=40, fg_color="transparent",
                             hover_color="#444")
 next_button.grid(row=0, column=3, padx=10)
+ToolTip(next_button, "Melodia Urmatoare")
 
-# C. Tools
+# C. Tools (Volum, Loop, Shuffle, Add, Del)
 extras_frame = ctk.CTkFrame(control_frame, fg_color="transparent")
 extras_frame.pack(fill=tk.X, padx=20, pady=(10, 20))
 
@@ -849,35 +850,47 @@ slider_volum = ctk.CTkSlider(extras_frame, from_=0, to=1, command=set_volum, wid
                              progress_color="white")
 slider_volum.set(0.5)
 slider_volum.pack(side=tk.LEFT)
+ToolTip(slider_volum, "Ajusteaza Volumul")
 
+# Rândul de jos (Bara de control extra)
 extra_row_frame = ctk.CTkFrame(control_frame, fg_color="transparent")
 extra_row_frame.pack(fill=tk.X, padx=10, pady=5)
 
+# Stanga: Management fisiere
 del_btn = ctk.CTkButton(extra_row_frame, text="🗑", command=sterge_melodie, width=30, fg_color="#FF4444")
 del_btn.pack(side=tk.LEFT, padx=2)
-ToolTip(del_btn, "Sterge din playlist sau biblioteca")
+ToolTip(del_btn, "Sterge Melodia Selectata")
 
 add_btn = ctk.CTkButton(extra_row_frame, text="➕", command=adauga_melodie_noua, width=30, fg_color="gray")
 add_btn.pack(side=tk.LEFT, padx=2)
-ToolTip(add_btn, "Importa Melodii (Doar in Biblioteca)")
+ToolTip(add_btn, "Importa Melodii MP3")
 
+# Centru: Playback
 shuffle_button = ctk.CTkButton(extra_row_frame, text="🔀 OFF", command=toggle_shuffle, width=50, fg_color="gray")
 shuffle_button.pack(side=tk.LEFT, padx=2)
+ToolTip(shuffle_button, "Redare Aleatorie (Shuffle)")
 
 loop_button = ctk.CTkButton(extra_row_frame, text="🔁 OFF", command=toggle_loop, width=50, fg_color="gray")
 loop_button.pack(side=tk.LEFT, padx=2)
+ToolTip(loop_button, "Repetare: OFF / Melodie / Tot")
 
 coada_btn = ctk.CTkButton(extra_row_frame, text="☰", command=deschide_manager_coada, width=30, fg_color="#555555")
 coada_btn.pack(side=tk.LEFT, padx=2)
+ToolTip(coada_btn, "Vezi/Editeaza Coada de Asteptare")
 
+# Dreapta: Teme
 theme_frame = ctk.CTkFrame(extra_row_frame, fg_color="transparent")
 theme_frame.pack(side=tk.RIGHT)
+
 theme_dropdown = ctk.CTkOptionMenu(theme_frame, values=list(THEME_COLORS.keys()),
                                    command=schimba_culoare_accent, width=100)
 theme_dropdown.set("Spotify Green")
 theme_dropdown.pack(side=tk.RIGHT, padx=2)
+ToolTip(theme_dropdown, "Alege Culoarea Temei")
+
 theme_bg_btn = ctk.CTkButton(theme_frame, text="☀️ Light", command=schimba_tema_fundal, width=60, fg_color="gray")
 theme_bg_btn.pack(side=tk.RIGHT, padx=2)
+ToolTip(theme_bg_btn, "Schimba Modul: Zi / Noapte")
 
 status_label = ctk.CTkLabel(content_frame, text="Asteptare...", text_color="gray")
 status_label.pack(side=tk.BOTTOM, pady=5)
@@ -892,6 +905,8 @@ def create_mainloop():
     login_window = ctk.CTkToplevel(root)
     login_window.title("Autentificare")
     login_window.geometry("300x350")
+    # Si login-ul trebuie sa stea deasupra
+    login_window.attributes("-topmost", True)
     login_window.bind('<Return>', login)
 
     ctk.CTkLabel(login_window, text="User:").pack(pady=(10, 0))
@@ -900,7 +915,7 @@ def create_mainloop():
     ctk.CTkLabel(login_window, text="Parola:").pack(pady=(10, 0))
     password_entry = ctk.CTkEntry(login_window, show="*")
     password_entry.pack(pady=5)
-    ctk.CTkButton(login_window, text="logare", command=login, fg_color=THEME_COLORS["Spotify Green"]).pack(pady=20)
+    ctk.CTkButton(login_window, text="LOGIN", command=login, fg_color=THEME_COLORS["Spotify Green"]).pack(pady=20)
 
     def register_cmd():
         u = username_entry.get();
