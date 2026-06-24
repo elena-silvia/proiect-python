@@ -1,4 +1,4 @@
-#MP3-Player
+### MP3-Player
 A desktop application for audio playback and library management with a multi-user authentication system.
 
 ### Tech Stack:
